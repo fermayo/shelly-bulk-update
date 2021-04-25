@@ -1,4 +1,4 @@
-module github.com/fermayo/shelly-bulk-upgrade
+module github.com/fermayo/shelly-bulk-update
 
 go 1.16
 
