@@ -1,6 +1,6 @@
 # shelly-bulk-update
 
-Automatically updates the firmware of all your Shelly devices at once.
+Automatically updates the firmware of all your [Shelly](https://shelly.cloud/) devices at once.
 
 
 ## Installation
@@ -32,7 +32,10 @@ Ensure you are on the same network as your Shelly devices. Then run the binary:
 ```
 
 It will automatically discover all your Shelly devices using mDNS and attempt to update them if possible.
-While updates are in progress and devices are restarting, you might see connection errors. Sometimes it takes a few minutes, please be patient :-)
+
+Please note:
+* The initial discovery can take up to 1 minute.
+* While updates are in progress and devices are restarting, you might see connection errors. Sometimes it takes a few minutes, please be patient :-)
 
 
 ## TODO
