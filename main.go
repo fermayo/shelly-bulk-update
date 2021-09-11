@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -19,17 +20,51 @@ const (
 	OtaCheckUrl = "http://%s/ota/check"
 )
 
-var scanTimeout = time.Second * 60
+var (
+	scanTimeout = time.Second * 60
+	username    string
+	password    string
+)
 
-type shellyUpdateStatusResponse struct {
-	Status     string `json:"status"`
-	HasUpdate  bool   `json:"has_update"`
-	NewVersion string `json:"new_version"`
-	OldVersion string `json:"old_version"`
-}
+type (
+	shellyUpdateStatusResponse struct {
+		Status     string `json:"status"`
+		HasUpdate  bool   `json:"has_update"`
+		NewVersion string `json:"new_version"`
+		OldVersion string `json:"old_version"`
+	}
 
-type shellyUpdateCheckResponse struct {
-	Status string `json:"status"`
+	shellyUpdateCheckResponse struct {
+		Status string `json:"status"`
+	}
+)
+
+func makeGetRequest(url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if password != "" {
+		req.SetBasicAuth(username, password)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
 }
 
 func makeShellyUpdateRequest(hostname string, update bool) (*shellyUpdateStatusResponse, error) {
@@ -39,13 +74,7 @@ func makeShellyUpdateRequest(hostname string, update bool) (*shellyUpdateStatusR
 		url += "?update=1"
 	}
 
-	resp, err := http.Get(fmt.Sprintf(url, hostname))
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := makeGetRequest(url)
 	if err != nil {
 		return nil, err
 	}
@@ -60,13 +89,7 @@ func makeShellyUpdateRequest(hostname string, update bool) (*shellyUpdateStatusR
 }
 
 func triggerShellyUpdateCheck(hostname string) (*shellyUpdateCheckResponse, error) {
-	resp, err := http.Get(fmt.Sprintf(OtaCheckUrl, hostname))
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := makeGetRequest(fmt.Sprintf(OtaCheckUrl, hostname))
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +165,15 @@ func updateShelly(instance *zeroconf.ServiceEntry, wg *sync.WaitGroup) {
 }
 
 func main() {
+	flag.StringVar(&username, "username", "admin", "username to use for authentication")
+	flag.StringVar(&password, "password", "", "password to use for authentication")
+
+	flag.Parse()
+
+	if password != "" {
+		fmt.Printf("Using basic authentication: %s:*******\n", username)
+	}
+
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		log.Fatalln("Failed to initialize resolver:", err.Error())
