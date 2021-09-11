@@ -5,23 +5,8 @@ Automatically updates the firmware of all your [Shelly](https://shelly.cloud/) d
 
 ## Installation
 
-Download the binary for your platform:
+Download the latest binary for your platform following the instructions on the [Releases](https://github.com/fermayo/shelly-bulk-update/releases) page.
 
-### macOS
-
-```bash
-curl -sSL https://github.com/fermayo/shelly-bulk-update/releases/download/v1.0/shelly-bulk-update-Darwin-x86_64 -o shelly-bulk-update; chmod +x shelly-bulk-update
-```
-
-### Linux
-
-```bash
-curl -sSL https://github.com/fermayo/shelly-bulk-update/releases/download/v1.0/shelly-bulk-update-Linux-x86_64 -o shelly-bulk-update; chmod +x shelly-bulk-update
-```
-
-### Windows
-
-[Click here](https://github.com/fermayo/shelly-bulk-update/releases/download/v1.0/shelly-bulk-update-Windows-x86_64.exe) to download the binary
 
 ## Usage
 
@@ -37,8 +22,8 @@ Please note:
 * The initial discovery can take up to 1 minute.
 * While updates are in progress and devices are restarting, you might see connection errors. Sometimes it takes a few minutes, please be patient :-)
 
+If any (or all) of your devices have authentication enabled, use the `--username` and `--password` flags to define your credentials:
 
-## TODO
-
-* Better UI
-* Support authentication
+```bash
+./shelly-bulk-update --username admin --password MyPa$$w0rd
+```
