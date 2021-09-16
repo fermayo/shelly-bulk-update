@@ -74,7 +74,7 @@ func makeShellyUpdateRequest(hostname string, update bool) (*shellyUpdateStatusR
 		url += "?update=1"
 	}
 
-	body, err := makeGetRequest(url)
+	body, err := makeGetRequest(fmt.Sprintf(url, hostname))
 	if err != nil {
 		return nil, err
 	}
