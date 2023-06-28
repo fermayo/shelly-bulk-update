@@ -13,3 +13,5 @@
 
 # Built binaries
 bin/
+
+.idea
