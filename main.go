@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -115,6 +116,15 @@ func updateShelly(instance *zeroconf.ServiceEntry, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	shellyAddress := instance.AddrIPv4[0].String()
+	gen := 1
+	if slices.Contains(instance.Text, "gen=2") {
+		gen = 2
+	}
+
+	if gen == 2 {
+		fmt.Printf("[%s] device is gen2, which is not suported at the moment. Aborting...\n", instance.Instance)
+		return
+	}
 
 	// First, we trigger a check for updates
 	fmt.Printf("[%s] checking for updates...\n", instance.HostName)
@@ -184,7 +194,8 @@ func main() {
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		fmt.Printf("[scanner] looking for Shelly devices using mDNS (%ds timeout)...\n", int(scanTimeout.Seconds()))
 		for entry := range results {
-			if strings.HasPrefix(entry.Instance, "shelly") {
+			log.Printf("DEBUG: %+v\n", entry)
+			if strings.HasPrefix(strings.ToLower(entry.Instance), "shelly") {
 				wg.Add(1)
 				go updateShelly(entry, &wg)
 			}
