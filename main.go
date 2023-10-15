@@ -299,7 +299,6 @@ func main() {
 				}()
 			}
 		}
-		fmt.Println("[scanner] scanning process finished")
 	}(entries)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
@@ -310,5 +309,6 @@ func main() {
 	}
 
 	<-ctx.Done()
+	fmt.Println("[scanner] scanning process finished")
 	wg.Wait()
 }
