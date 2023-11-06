@@ -205,9 +205,9 @@ func updateShellyGen1(name, address string) {
 			updateStatusCheck, err := checkShellyUpdateStatus(address)
 			if err != nil {
 				fmt.Printf("%s failed to query update status: %s, retrying...\n", prefix, err)
-			} else {
-				updateStatus = updateStatusCheck
+				continue
 			}
+			updateStatus = updateStatusCheck
 		}
 
 		fmt.Printf("%s device updated to %s!\n", prefix, updateStatus.OldVersion)
@@ -234,6 +234,7 @@ func updateShellyGen2(name, address string) {
 		fmt.Printf("%s already up to date\n", prefix)
 		return
 	}
+	newVersion := updateVersion
 
 	fmt.Printf("%s updating to version %s...\n", prefix, updateVersion)
 	err = makeGen2UpdateRequest(address, updateStage)
@@ -241,6 +242,29 @@ func updateShellyGen2(name, address string) {
 		fmt.Printf("%s failed to update: %s, aborting...\n", prefix, err)
 		return
 	}
+
+	// wait for update to complete
+	tries := 0
+	for updateVersion != "" {
+		tries++
+		if tries > 12 {
+			fmt.Printf("%s failed to check if update completed successfully", prefix)
+			return
+		}
+		time.Sleep(time.Second * 5)
+		updates, err := makeGen2CheckForUpdateRequest(address)
+		if err != nil {
+			fmt.Printf("%s failed to query update status: %s, retrying...\n", prefix, err)
+			continue
+		}
+
+		if updateStage == "beta" {
+			updateVersion = updates.Beta.Version
+		} else {
+			updateVersion = updates.Stable.Version
+		}
+	}
+	fmt.Printf("%s device updated to %s!\n", prefix, newVersion)
 }
 
 func updateShelly(name, address string, txtRecords []string, genToUpdate int) {
@@ -273,7 +297,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	resolver, err := zeroconf.NewResolver(nil)
+	// Listen only for IPv4 addresses. Otherwise, it may happen that ServiceEntry has an empty
+	// AddrIPv4 slice. It happens when the IPv6 arrives first and ServiceEntries are not updated
+	// when more data arrives.
+	// See https://github.com/grandcat/zeroconf/issues/27
+	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
 	if err != nil {
 		log.Fatalln("Failed to initialize resolver:", err.Error())
 	}
@@ -290,7 +318,8 @@ func main() {
 					address := entry.HostName
 					if len(entry.AddrIPv4) > 0 {
 						address = entry.AddrIPv4[0].String()
-						// not yet:
+						// IPv6 support is still very limited
+						// See https://shelly-api-docs.shelly.cloud/gen2/General/IPv6
 						//} else if len(entry.AddrIPv6) > 0 {
 						//	address = fmt.Sprintf("[%s]", entry.AddrIPv6[0].String())
 					}
