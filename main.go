@@ -217,7 +217,7 @@ func updateShellyGen1(name, address string) {
 }
 
 func updateShellyGen2(name, address string) {
-	prefix := fmt.Sprintf("[%s/%s/gen2]", name, address)
+	prefix := fmt.Sprintf("[%s/%s/gen2+]", name, address)
 	// First, we trigger a check for updates
 	fmt.Printf("%s checking for updates...\n", prefix)
 	updates, err := makeGen2CheckForUpdateRequest(address)
@@ -268,8 +268,8 @@ func updateShellyGen2(name, address string) {
 }
 
 func updateShelly(name, address string, txtRecords []string, genToUpdate int) {
-	if slices.Contains(txtRecords, "gen=2") {
-		if genToUpdate == 2 || genToUpdate == 0 {
+	if slices.Contains(txtRecords, "gen=2") || slices.Contains(txtRecords, "gen=3") {
+		if genToUpdate == 2 || genToUpdate == 3 || genToUpdate == 0 {
 			updateShellyGen2(name, address)
 		}
 		return
