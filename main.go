@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -17,327 +14,195 @@ import (
 	"github.com/grandcat/zeroconf"
 )
 
-const (
-	// https://shelly-api-docs.shelly.cloud/gen1/#ota
-	otaUrl = "http://%s/ota"
+const scanTimeout = 60 * time.Second
 
-	// https://shelly-api-docs.shelly.cloud/gen1/#ota-check
-	otaCheckUrl = "http://%s/ota/check"
-
-	// https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Shelly#shellycheckforupdate
-	checkForUpdateUrl = "http://%s/rpc/Shelly.CheckForUpdate"
-
-	// https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Shelly#shellyupdate
-	updateUrl = "http://%s/rpc/Shelly.Update?stage=%s"
-)
-
-var (
-	scanTimeout = time.Second * 60
-	username    string
-	password    string
-	updateStage string
-	genToUpdate int
-)
-
-type (
-	versionInfo struct {
-		Version string `json:"version"`
-		BuildId string `json:"build_id"`
-	}
-
-	checkForUpdateResponse struct {
-		Stable versionInfo `json:"stable"`
-		Beta   versionInfo `json:"beta"`
-	}
-
-	shellyUpdateStatusResponse struct {
-		Status      string `json:"status"`
-		HasUpdate   bool   `json:"has_update"`
-		NewVersion  string `json:"new_version"`
-		OldVersion  string `json:"old_version"`
-		BetaVersion string `json:"beta_version"`
-	}
-
-	shellyUpdateCheckResponse struct {
-		Status string `json:"status"`
-	}
-)
-
-func makeGetRequest(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if password != "" {
-		req.SetBasicAuth(username, password)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return body, nil
+type config struct {
+	username string
+	password string
+	stage    string
+	gen      int
 }
 
-func makeShellyUpdateRequest(hostname string, update bool) (*shellyUpdateStatusResponse, error) {
-	url := otaUrl
-	if update {
-		if updateStage == "beta" {
-			url += "?beta=1"
-		} else {
-			url += "?update=1"
-		}
+// shouldUpdate reports whether a device of the given generation should be
+// updated given the target generation filter (0 = all).
+func shouldUpdate(isGen2Plus bool, targetGen int) bool {
+	if isGen2Plus {
+		return targetGen == 0 || targetGen == 2 || targetGen == 3
 	}
-
-	body, err := makeGetRequest(fmt.Sprintf(url, hostname))
-	if err != nil {
-		return nil, err
-	}
-
-	var updateStatus *shellyUpdateStatusResponse
-	err = json.Unmarshal(body, &updateStatus)
-	if err != nil {
-		return nil, err
-	}
-
-	return updateStatus, nil
+	return targetGen == 0 || targetGen == 1
 }
 
-func triggerShellyUpdateCheck(hostname string) (*shellyUpdateCheckResponse, error) {
-	body, err := makeGetRequest(fmt.Sprintf(otaCheckUrl, hostname))
-	if err != nil {
-		return nil, err
-	}
+func updateGen1(client *shellyClient, d *display, state *deviceState, cfg config) {
+	d.update(state, statusChecking, "")
 
-	var checkStatus *shellyUpdateCheckResponse
-	err = json.Unmarshal(body, &checkStatus)
-	if err != nil {
-		return nil, err
-	}
-
-	return checkStatus, nil
-}
-
-func makeGen2CheckForUpdateRequest(hostname string) (*checkForUpdateResponse, error) {
-	body, err := makeGetRequest(fmt.Sprintf(checkForUpdateUrl, hostname))
-	if err != nil {
-		return nil, err
-	}
-
-	var checkForUpdate *checkForUpdateResponse
-	err = json.Unmarshal(body, &checkForUpdate)
-	if err != nil {
-		return nil, err
-	}
-
-	return checkForUpdate, nil
-}
-
-func makeGen2UpdateRequest(hostname string, stage string) error {
-	_, err := makeGetRequest(fmt.Sprintf(updateUrl, hostname, stage))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func triggerShellyUpdate(hostname string) (*shellyUpdateStatusResponse, error) {
-	return makeShellyUpdateRequest(hostname, true)
-}
-
-func checkShellyUpdateStatus(hostname string) (*shellyUpdateStatusResponse, error) {
-	return makeShellyUpdateRequest(hostname, false)
-}
-
-func updateShellyGen1(name, address string) {
-	prefix := fmt.Sprintf("[%s/%s/gen1]", name, address)
-	// First, we trigger a check for updates
-	fmt.Printf("%s checking for updates...\n", prefix)
-	_, err := triggerShellyUpdateCheck(address)
-	if err != nil {
-		fmt.Printf("%s failed to check for updates: %s, aborting...\n", prefix, err)
+	if err := client.gen1TriggerUpdateCheck(state.address); err != nil {
+		d.update(state, statusFailed, err.Error())
 		return
 	}
 
-	// Check for updates is asynchronous, so we need to wait a bit
-	time.Sleep(time.Second * 5)
+	// The update check runs asynchronously on the device side.
+	time.Sleep(5 * time.Second)
 
-	// Then, we check if there are any updates available
-	updateStatus, err := checkShellyUpdateStatus(address)
+	status, err := client.gen1GetUpdateStatus(state.address)
 	if err != nil {
-		fmt.Printf("%s failed to query update status: %s, aborting...\n", prefix, err)
+		d.update(state, statusFailed, err.Error())
 		return
 	}
 
-	// If there's an update available, trigger the update
-	if (updateStage == "stable" && updateStatus.HasUpdate) ||
-		(updateStage == "beta" && updateStatus.OldVersion != updateStatus.BetaVersion) {
-		newVersion := updateStatus.NewVersion
-		if updateStage == "beta" {
-			newVersion = updateStatus.BetaVersion
-		}
-		fmt.Printf(
-			"%s update available! (%s -> %s), updating...\n",
-			prefix, updateStatus.OldVersion, newVersion,
-		)
+	hasUpdate := (cfg.stage == "stable" && status.HasUpdate) ||
+		(cfg.stage == "beta" && status.OldVersion != status.BetaVersion)
+	if !hasUpdate {
+		d.update(state, statusUpToDate, status.OldVersion)
+		return
+	}
 
-		updateStatus, err := triggerShellyUpdate(address)
+	fromVersion := status.OldVersion
+	toVersion := status.NewVersion
+	if cfg.stage == "beta" {
+		toVersion = status.BetaVersion
+	}
+	d.update(state, statusUpdating, fmt.Sprintf("%s → %s", fromVersion, toVersion))
+
+	status, err = client.gen1TriggerUpdate(state.address, cfg.stage == "beta")
+	if err != nil {
+		d.update(state, statusFailed, err.Error())
+		return
+	}
+
+	for status.Status == "updating" {
+		time.Sleep(5 * time.Second)
+		updated, err := client.gen1GetUpdateStatus(state.address)
 		if err != nil {
-			fmt.Printf("%s failed to start update: %s, aborting...\n", prefix, err)
+			continue // device may be rebooting; retry
+		}
+		status = updated
+	}
+
+	// After the update, OldVersion holds the newly installed firmware version.
+	d.update(state, statusUpdated, fmt.Sprintf("%s → %s", fromVersion, status.OldVersion))
+}
+
+func updateGen2(client *shellyClient, d *display, state *deviceState, cfg config) {
+	d.update(state, statusChecking, "")
+
+	info, err := client.gen2CheckForUpdate(state.address)
+	if err != nil {
+		d.update(state, statusFailed, err.Error())
+		return
+	}
+
+	targetVersion := info.Stable.Version
+	if cfg.stage == "beta" {
+		targetVersion = info.Beta.Version
+	}
+	if targetVersion == "" {
+		d.update(state, statusUpToDate, "")
+		return
+	}
+
+	d.update(state, statusUpdating, fmt.Sprintf("→ %s", targetVersion))
+
+	if err := client.gen2TriggerUpdate(state.address, cfg.stage); err != nil {
+		d.update(state, statusFailed, err.Error())
+		return
+	}
+
+	// Poll until the available update version is empty, meaning the device has
+	// rebooted with the new firmware. Allow up to ~60s for this.
+	const maxPolls = 12
+	for i := 0; i < maxPolls; i++ {
+		time.Sleep(5 * time.Second)
+		info, err := client.gen2CheckForUpdate(state.address)
+		if err != nil {
+			continue // device is likely rebooting
+		}
+		pending := info.Stable.Version
+		if cfg.stage == "beta" {
+			pending = info.Beta.Version
+		}
+		if pending == "" {
+			d.update(state, statusUpdated, targetVersion)
 			return
 		}
+	}
 
-		for updateStatus.Status == "updating" {
-			time.Sleep(time.Second * 5)
-			updateStatusCheck, err := checkShellyUpdateStatus(address)
-			if err != nil {
-				fmt.Printf("%s failed to query update status: %s, retrying...\n", prefix, err)
-				continue
-			}
-			updateStatus = updateStatusCheck
-		}
+	d.update(state, statusFailed, "timed out waiting for update to complete")
+}
 
-		fmt.Printf("%s device updated to %s!\n", prefix, updateStatus.OldVersion)
+func handleDevice(client *shellyClient, d *display, cfg config, name, address string, txtRecords []string) {
+	isGen2Plus := slices.Contains(txtRecords, "gen=2") || slices.Contains(txtRecords, "gen=3")
+	if !shouldUpdate(isGen2Plus, cfg.gen) {
+		return
+	}
+
+	gen := "gen1"
+	if isGen2Plus {
+		gen = "gen2+"
+	}
+
+	state := d.addDevice(name, address, gen)
+	if isGen2Plus {
+		updateGen2(client, d, state, cfg)
 	} else {
-		fmt.Printf("%s already up to date (%s)\n", prefix, updateStatus.OldVersion)
-	}
-}
-
-func updateShellyGen2(name, address string) {
-	prefix := fmt.Sprintf("[%s/%s/gen2+]", name, address)
-	// First, we trigger a check for updates
-	fmt.Printf("%s checking for updates...\n", prefix)
-	updates, err := makeGen2CheckForUpdateRequest(address)
-	if err != nil {
-		fmt.Printf("%s failed to check for updates: %s, aborting...\n", prefix, err)
-		return
-	}
-
-	updateVersion := updates.Stable.Version
-	if updateStage == "beta" {
-		updateVersion = updates.Beta.Version
-	}
-	if updateVersion == "" {
-		fmt.Printf("%s already up to date\n", prefix)
-		return
-	}
-	newVersion := updateVersion
-
-	fmt.Printf("%s updating to version %s...\n", prefix, updateVersion)
-	err = makeGen2UpdateRequest(address, updateStage)
-	if err != nil {
-		fmt.Printf("%s failed to update: %s, aborting...\n", prefix, err)
-		return
-	}
-
-	// wait for update to complete
-	tries := 0
-	for updateVersion != "" {
-		tries++
-		if tries > 12 {
-			fmt.Printf("%s failed to check if update completed successfully", prefix)
-			return
-		}
-		time.Sleep(time.Second * 5)
-		updates, err := makeGen2CheckForUpdateRequest(address)
-		if err != nil {
-			fmt.Printf("%s failed to query update status: %s, retrying...\n", prefix, err)
-			continue
-		}
-
-		if updateStage == "beta" {
-			updateVersion = updates.Beta.Version
-		} else {
-			updateVersion = updates.Stable.Version
-		}
-	}
-	fmt.Printf("%s device updated to %s!\n", prefix, newVersion)
-}
-
-func updateShelly(name, address string, txtRecords []string, genToUpdate int) {
-	if slices.Contains(txtRecords, "gen=2") || slices.Contains(txtRecords, "gen=3") {
-		if genToUpdate == 2 || genToUpdate == 3 || genToUpdate == 0 {
-			updateShellyGen2(name, address)
-		}
-		return
-	}
-
-	if genToUpdate == 1 || genToUpdate == 0 {
-		updateShellyGen1(name, address)
+		updateGen1(client, d, state, cfg)
 	}
 }
 
 func main() {
-	flag.StringVar(&username, "username", "admin", "username to use for authentication")
-	flag.StringVar(&password, "password", "", "password to use for authentication")
-	flag.StringVar(&updateStage, "stage", "stable", "stable or beta")
-	flag.IntVar(&genToUpdate, "gen", 0, "device generation to update (default: all)")
-
+	var cfg config
+	flag.StringVar(&cfg.username, "username", "admin", "username for HTTP basic auth")
+	flag.StringVar(&cfg.password, "password", "", "password for HTTP basic auth")
+	flag.StringVar(&cfg.stage, "stage", "stable", "firmware channel: stable or beta")
+	flag.IntVar(&cfg.gen, "gen", 0, "device generation to update (0 = all, 1 = gen1, 2 or 3 = gen2+)")
 	flag.Parse()
 
-	if password != "" {
-		fmt.Printf("Using basic authentication: %s:*******\n", username)
-	}
-
-	if updateStage != "stable" && updateStage != "beta" {
+	if cfg.stage != "stable" && cfg.stage != "beta" {
+		fmt.Fprintln(os.Stderr, "error: -stage must be 'stable' or 'beta'")
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	// Listen only for IPv4 addresses. Otherwise, it may happen that ServiceEntry has an empty
-	// AddrIPv4 slice. It happens when the IPv6 arrives first and ServiceEntries are not updated
-	// when more data arrives.
+	client := newShellyClient(cfg.username, cfg.password)
+
+	d := newDisplay(scanTimeout)
+	d.start()
+
+	// Listen only for IPv4 to avoid empty AddrIPv4 slices when IPv6 arrives first.
 	// See https://github.com/grandcat/zeroconf/issues/27
 	resolver, err := zeroconf.NewResolver(zeroconf.SelectIPTraffic(zeroconf.IPv4))
 	if err != nil {
-		log.Fatalln("Failed to initialize resolver:", err.Error())
+		log.Fatalln("failed to initialize mDNS resolver:", err)
 	}
 
 	var wg sync.WaitGroup
 	entries := make(chan *zeroconf.ServiceEntry)
+
 	go func(results <-chan *zeroconf.ServiceEntry) {
-		fmt.Printf("[scanner] looking for Shelly devices using mDNS (%ds timeout)...\n", int(scanTimeout.Seconds()))
 		for entry := range results {
-			entry := entry
-			if strings.HasPrefix(strings.ToLower(entry.Instance), "shelly") {
-				wg.Add(1)
-				go func() {
-					address := entry.HostName
-					if len(entry.AddrIPv4) > 0 {
-						address = entry.AddrIPv4[0].String()
-						// IPv6 support is still very limited
-						// See https://shelly-api-docs.shelly.cloud/gen2/General/IPv6
-						//} else if len(entry.AddrIPv6) > 0 {
-						//	address = fmt.Sprintf("[%s]", entry.AddrIPv6[0].String())
-					}
-					updateShelly(entry.Instance, address, entry.Text, genToUpdate)
-					wg.Done()
-				}()
+			if !strings.HasPrefix(strings.ToLower(entry.Instance), "shelly") {
+				continue
 			}
+			address := entry.HostName
+			if len(entry.AddrIPv4) > 0 {
+				address = entry.AddrIPv4[0].String()
+				// IPv6 support is limited; see https://shelly-api-docs.shelly.cloud/gen2/General/IPv6
+			}
+			entry := entry // capture for goroutine
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				handleDevice(client, d, cfg, entry.Instance, address, entry.Text)
+			}()
 		}
 	}(entries)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	defer cancel()
-	err = resolver.Browse(ctx, "_http._tcp", "local.", entries)
-	if err != nil {
-		log.Fatalln("Failed to browse:", err.Error())
+	if err := resolver.Browse(ctx, "_http._tcp", "local.", entries); err != nil {
+		log.Fatalln("failed to browse mDNS:", err)
 	}
 
 	<-ctx.Done()
-	fmt.Println("[scanner] scanning process finished")
 	wg.Wait()
+	d.finalRender()
 }
