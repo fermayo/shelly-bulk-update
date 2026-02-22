@@ -38,8 +38,6 @@ For Gen1 devices you can also specify a username (default: `admin`):
 ./shelly-bulk-update -username admin -password MyPa$$w0rd
 ```
 
-> **Note:** Gen2/Gen3 devices use HTTP Digest Authentication, which is handled automatically — no extra configuration needed.
-
 ### Firmware channel
 
 To update to the latest beta firmware instead of stable, use `-stage=beta`:
