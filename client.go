@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
+	"strings"
 	"time"
 )
 
@@ -57,6 +62,51 @@ func newShellyClient(username, password string) *shellyClient {
 	}
 }
 
+func parseDigestChallenge(header string) map[string]string {
+	params := make(map[string]string)
+	header = strings.TrimPrefix(header, "Digest ")
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		eqIdx := strings.Index(part, "=")
+		if eqIdx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(part[:eqIdx])
+		val := strings.Trim(strings.TrimSpace(part[eqIdx+1:]), `"`)
+		params[key] = val
+	}
+	return params
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func (c *shellyClient) buildDigestAuthHeader(method, uri, realm, nonce, qop, algorithm string) string {
+	ha1 := sha256Hex(c.username + ":" + realm + ":" + c.password)
+	ha2 := sha256Hex(method + ":" + uri)
+	if algorithm == "" {
+		algorithm = "SHA-256"
+	}
+	if qop == "auth" {
+		nc := "00000001"
+		cnonceBytes := make([]byte, 8)
+		rand.Read(cnonceBytes)
+		cnonce := hex.EncodeToString(cnonceBytes)
+		response := sha256Hex(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
+		return fmt.Sprintf(
+			`Digest username="%s", realm="%s", nonce="%s", uri="%s", algorithm=%s, qop=%s, nc=%s, cnonce="%s", response="%s"`,
+			c.username, realm, nonce, uri, algorithm, qop, nc, cnonce, response,
+		)
+	}
+	response := sha256Hex(ha1 + ":" + nonce + ":" + ha2)
+	return fmt.Sprintf(
+		`Digest username="%s", realm="%s", nonce="%s", uri="%s", algorithm=%s, response="%s"`,
+		c.username, realm, nonce, uri, algorithm, response,
+	)
+}
+
 func (c *shellyClient) get(url string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -69,6 +119,33 @@ func (c *shellyClient) get(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Gen2+ devices use Digest authentication (SHA-256) rather than Basic auth.
+	// If we get a 401 with a Digest challenge, retry with proper digest credentials.
+	if resp.StatusCode == http.StatusUnauthorized && c.password != "" {
+		wwwAuth := resp.Header.Get("WWW-Authenticate")
+		resp.Body.Close()
+		if strings.HasPrefix(wwwAuth, "Digest ") {
+			params := parseDigestChallenge(wwwAuth)
+			parsedURL, err := neturl.Parse(url)
+			if err != nil {
+				return nil, err
+			}
+			req2, err := http.NewRequest(http.MethodGet, url, nil)
+			if err != nil {
+				return nil, err
+			}
+			req2.Header.Set("Authorization", c.buildDigestAuthHeader(
+				http.MethodGet, parsedURL.RequestURI(),
+				params["realm"], params["nonce"], params["qop"], params["algorithm"],
+			))
+			resp, err = c.http.Do(req2)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
