@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,13 +23,30 @@ type config struct {
 	gen      int
 }
 
-// shouldUpdate reports whether a device of the given generation should be
-// updated given the target generation filter (0 = all).
-func shouldUpdate(isGen2Plus bool, targetGen int) bool {
-	if isGen2Plus {
-		return targetGen == 0 || targetGen == 2 || targetGen == 3
+// genFromTxtRecords returns the device generation from mDNS TXT records.
+// Defaults to 1 (Gen1) if no gen= record is present.
+func genFromTxtRecords(txtRecords []string) int {
+	for _, r := range txtRecords {
+		if strings.HasPrefix(r, "gen=") {
+			n, err := strconv.Atoi(r[4:])
+			if err == nil && n > 0 {
+				return n
+			}
+		}
 	}
-	return targetGen == 0 || targetGen == 1
+	return 1
+}
+
+// shouldUpdate reports whether a device of the given generation should be
+// updated given the target generation filter (0 = all, 1 = gen1 only, 2+ = gen2 and newer).
+func shouldUpdate(gen, targetGen int) bool {
+	if targetGen == 0 {
+		return true
+	}
+	if targetGen == 1 {
+		return gen == 1
+	}
+	return gen >= 2
 }
 
 func updateGen1(client *shellyClient, d *display, state *deviceState, cfg config) {
@@ -130,18 +147,13 @@ func updateGen2(client *shellyClient, d *display, state *deviceState, cfg config
 }
 
 func handleDevice(client *shellyClient, d *display, cfg config, name, address string, txtRecords []string) {
-	isGen2Plus := slices.Contains(txtRecords, "gen=2") || slices.Contains(txtRecords, "gen=3")
-	if !shouldUpdate(isGen2Plus, cfg.gen) {
+	gen := genFromTxtRecords(txtRecords)
+	if !shouldUpdate(gen, cfg.gen) {
 		return
 	}
 
-	gen := "gen1"
-	if isGen2Plus {
-		gen = "gen2+"
-	}
-
-	state := d.addDevice(name, address, gen)
-	if isGen2Plus {
+	state := d.addDevice(name, address, fmt.Sprintf("gen%d", gen))
+	if gen >= 2 {
 		updateGen2(client, d, state, cfg)
 	} else {
 		updateGen1(client, d, state, cfg)
@@ -153,7 +165,7 @@ func main() {
 	flag.StringVar(&cfg.username, "username", "admin", "username for HTTP basic auth")
 	flag.StringVar(&cfg.password, "password", "", "password for HTTP basic auth")
 	flag.StringVar(&cfg.stage, "stage", "stable", "firmware channel: stable or beta")
-	flag.IntVar(&cfg.gen, "gen", 0, "device generation to update (0 = all, 1 = gen1, 2 or 3 = gen2+)")
+	flag.IntVar(&cfg.gen, "gen", 0, "device generation to update (0 = all, 1 = gen1 only, 2+ = gen2 and newer)")
 	flag.Parse()
 
 	if cfg.stage != "stable" && cfg.stage != "beta" {
