@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // ANSI color/style codes
@@ -144,8 +147,14 @@ func (d *display) render() {
 		fmt.Printf("\r\033[K  %s\n", strings.Repeat("─", 74))
 		lines += 2
 
+		// Fixed columns: 2 + 34 + 1 + 18 + 1 + 7 + 1 + 1(icon) + 1(space) = 66
+		const fixedWidth = 66
+		maxText := termWidth() - fixedWidth
 		for _, dev := range d.devices {
 			icon, color, text := formatDeviceStatus(dev)
+			if maxText > 1 {
+				text = truncate(text, maxText)
+			}
 			fmt.Printf("\r\033[K  %-34s %-18s %-7s %s%s %s%s\n",
 				dev.name, dev.address, dev.gen,
 				color, icon, text, ansiReset)
@@ -154,6 +163,27 @@ func (d *display) render() {
 	}
 
 	d.lastLineCount = lines
+}
+
+// termWidth returns the current terminal column width, defaulting to 120.
+func termWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 120
+	}
+	return w
+}
+
+// truncate shortens s to at most n runes, appending "…" if truncated.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // spinner returns a braille spinner frame based on elapsed time.
