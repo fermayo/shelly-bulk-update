@@ -189,7 +189,17 @@ func main() {
 	var wg sync.WaitGroup
 	entries := make(chan *zeroconf.ServiceEntry)
 
+	// The dispatcher is registered with the WaitGroup before it starts so
+	// that wg.Wait() can never observe an empty counter while device
+	// handlers are still being added. The dispatcher itself waits for all
+	// in-flight device handlers to finish before returning, which also lets
+	// devices discovered just before the timeout be processed.
+	// Termination relies on zeroconf closing the entries channel when the
+	// browse context expires (LookupParams.done() in v1.0.0).
+	wg.Add(1)
 	go func(results <-chan *zeroconf.ServiceEntry) {
+		defer wg.Done()
+		var devices sync.WaitGroup
 		for entry := range results {
 			if !strings.HasPrefix(strings.ToLower(entry.Instance), "shelly") {
 				continue
@@ -199,13 +209,13 @@ func main() {
 				address = entry.AddrIPv4[0].String()
 				// IPv6 support is limited; see https://shelly-api-docs.shelly.cloud/gen2/General/IPv6
 			}
-			entry := entry // capture for goroutine
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			devices.Add(1)
+			go func(entry *zeroconf.ServiceEntry, address string) {
+				defer devices.Done()
 				handleDevice(client, d, cfg, entry.Instance, address, entry.Text)
-			}()
+			}(entry, address)
 		}
+		devices.Wait()
 	}(entries)
 
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
