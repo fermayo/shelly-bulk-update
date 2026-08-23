@@ -28,7 +28,7 @@ jobs:
       run: make
 
     - name: Test
-      run: go test -v ./...
+      run: make test
 
     - name: Vet
       run: make vet

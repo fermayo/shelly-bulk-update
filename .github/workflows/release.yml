@@ -26,7 +26,7 @@ jobs:
       run: make fmt-check
 
     - name: Test
-      run: go test -v ./...
+      run: make test
 
     - name: Vet
       run: make vet

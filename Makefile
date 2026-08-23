@@ -38,13 +38,14 @@ bin/shelly-bulk-update-Windows-x86_64.exe: $(SRCS)
 	$(BUILD) -o $@ .
 
 test:
-	go test ./...
+	go test -v ./...
 
 vet:
 	go vet ./...
 
 fmt-check:
-	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "files not gofmt'd:"; echo "$$out"; exit 1; fi
+	@if ! out=$$(gofmt -l .); then echo "gofmt failed" >&2; exit 1; fi; \
+	if [ -n "$$out" ]; then echo "files not gofmt'd:"; echo "$$out"; exit 1; fi
 
 clean:
 	rm -rf bin/
