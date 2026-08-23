@@ -194,6 +194,8 @@ func main() {
 	// handlers are still being added. The dispatcher itself waits for all
 	// in-flight device handlers to finish before returning, which also lets
 	// devices discovered just before the timeout be processed.
+	// Termination relies on zeroconf closing the entries channel when the
+	// browse context expires (LookupParams.done() in v1.0.0).
 	wg.Add(1)
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		defer wg.Done()
