@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -103,24 +104,40 @@ func sha256Hex(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func md5Hex(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// digestHashFunc returns the hash function for a Digest authentication
+// algorithm token. Older Shelly Gen2 firmware challenges with MD5, newer
+// with SHA-256; unknown or missing algorithms default to SHA-256.
+func digestHashFunc(algorithm string) func(string) string {
+	if strings.EqualFold(algorithm, "MD5") {
+		return md5Hex
+	}
+	return sha256Hex
+}
+
 func (c *shellyClient) buildDigestAuthHeader(method, uri, realm, nonce, qop, algorithm string) string {
-	ha1 := sha256Hex(c.username + ":" + realm + ":" + c.password)
-	ha2 := sha256Hex(method + ":" + uri)
 	if algorithm == "" {
 		algorithm = "SHA-256"
 	}
+	hash := digestHashFunc(algorithm)
+	ha1 := hash(c.username + ":" + realm + ":" + c.password)
+	ha2 := hash(method + ":" + uri)
 	if qop == "auth" {
 		nc := "00000001"
 		cnonceBytes := make([]byte, 8)
 		rand.Read(cnonceBytes)
 		cnonce := hex.EncodeToString(cnonceBytes)
-		response := sha256Hex(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
+		response := hash(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2)
 		return fmt.Sprintf(
 			`Digest username="%s", realm="%s", nonce="%s", uri="%s", algorithm=%s, qop=%s, nc=%s, cnonce="%s", response="%s"`,
 			c.username, realm, nonce, uri, algorithm, qop, nc, cnonce, response,
 		)
 	}
-	response := sha256Hex(ha1 + ":" + nonce + ":" + ha2)
+	response := hash(ha1 + ":" + nonce + ":" + ha2)
 	return fmt.Sprintf(
 		`Digest username="%s", realm="%s", nonce="%s", uri="%s", algorithm=%s, response="%s"`,
 		c.username, realm, nonce, uri, algorithm, response,
