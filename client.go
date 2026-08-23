@@ -65,7 +65,27 @@ func newShellyClient(username, password string) *shellyClient {
 func parseDigestChallenge(header string) map[string]string {
 	params := make(map[string]string)
 	header = strings.TrimPrefix(header, "Digest ")
-	for _, part := range strings.Split(header, ",") {
+
+	// Split on commas outside of quoted strings so that values may contain
+	// commas themselves.
+	var parts []string
+	var b strings.Builder
+	inQuotes := false
+	for _, r := range header {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+			b.WriteRune(r)
+		case r == ',' && !inQuotes:
+			parts = append(parts, b.String())
+			b.Reset()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	parts = append(parts, b.String())
+
+	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		eqIdx := strings.Index(part, "=")
 		if eqIdx < 0 {
