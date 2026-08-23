@@ -38,15 +38,10 @@ func genFromTxtRecords(txtRecords []string) int {
 }
 
 // shouldUpdate reports whether a device of the given generation should be
-// updated given the target generation filter (0 = all, 1 = gen1 only, 2+ = gen2 and newer).
+// updated given the target generation filter (0 = all generations, otherwise
+// only devices of that exact generation).
 func shouldUpdate(gen, targetGen int) bool {
-	if targetGen == 0 {
-		return true
-	}
-	if targetGen == 1 {
-		return gen == 1
-	}
-	return gen >= 2
+	return targetGen == 0 || gen == targetGen
 }
 
 func updateGen1(client *shellyClient, d *display, state *deviceState, cfg config) {
@@ -173,7 +168,7 @@ func main() {
 	flag.StringVar(&cfg.username, "username", "admin", "username for HTTP basic auth")
 	flag.StringVar(&cfg.password, "password", "", "password for HTTP basic auth")
 	flag.StringVar(&cfg.stage, "stage", "stable", "firmware channel: stable or beta")
-	flag.IntVar(&cfg.gen, "gen", 0, "device generation to update (0 = all, 1 = gen1 only, 2+ = gen2 and newer)")
+	flag.IntVar(&cfg.gen, "gen", 0, "device generation to update (0 = all, N = generation N only)")
 	flag.Parse()
 
 	if cfg.stage != "stable" && cfg.stage != "beta" {
