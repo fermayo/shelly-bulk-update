@@ -86,13 +86,21 @@ func updateGen1(client *shellyClient, d *display, state *deviceState, cfg config
 		return
 	}
 
-	for status.Status == "updating" {
+	// Poll until the device leaves the "updating" state. Allow up to ~60s
+	// for this; the device may be unreachable for a while as it reboots.
+	const maxPolls = 12
+	for i := 0; i < maxPolls && status.Status == "updating"; i++ {
 		time.Sleep(5 * time.Second)
 		updated, err := client.gen1GetUpdateStatus(state.address)
 		if err != nil {
 			continue // device may be rebooting; retry
 		}
 		status = updated
+	}
+
+	if status.Status == "updating" {
+		d.update(state, statusFailed, "timed out waiting for update to complete")
+		return
 	}
 
 	// After the update, OldVersion holds the newly installed firmware version.
