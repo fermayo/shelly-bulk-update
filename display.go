@@ -24,12 +24,12 @@ const (
 type deviceStatus int
 
 const (
-	statusQueued    deviceStatus = iota // discovered, not yet processed
-	statusChecking                      // querying firmware info
-	statusUpToDate                      // no update needed
-	statusUpdating                      // update in progress
-	statusUpdated                       // update applied successfully
-	statusFailed                        // error occurred
+	statusQueued   deviceStatus = iota // discovered, not yet processed
+	statusChecking                     // querying firmware info
+	statusUpToDate                     // no update needed
+	statusUpdating                     // update in progress
+	statusUpdated                      // update applied successfully
+	statusFailed                       // error occurred
 )
 
 type deviceState struct {
